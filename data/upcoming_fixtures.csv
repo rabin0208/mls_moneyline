@@ -1,0 +1,16 @@
+espn_id,kickoff_utc,espn_home,espn_away,book,odds_H,odds_D,odds_A
+761712,2026-08-15T23:30Z,Atlanta United FC,Red Bull New York,DraftKings,2.0,3.8,3.1
+761711,2026-08-15T23:30Z,CF Montréal,D.C. United,DraftKings,2.2,3.45,3.0
+761710,2026-08-15T23:30Z,Charlotte FC,Columbus Crew,DraftKings,2.25,3.55,2.85
+761713,2026-08-15T23:30Z,Orlando City SC,FC Cincinnati,DraftKings,2.1,4.0,2.8
+761714,2026-08-15T23:30Z,Toronto FC,New England Revolution,DraftKings,2.1,3.55,3.15
+761715,2026-08-16T00:30Z,Houston Dynamo FC,LA Galaxy,DraftKings,1.6896551724137931,4.0,4.2
+761716,2026-08-16T00:30Z,Nashville SC,Inter Miami CF,DraftKings,2.35,3.6,2.65
+761718,2026-08-16T01:30Z,Colorado Rapids,Sporting Kansas City,DraftKings,1.4651162790697674,4.7,5.5
+761719,2026-08-16T01:30Z,Real Salt Lake,Minnesota United FC,DraftKings,1.6896551724137931,3.7,4.5
+761720,2026-08-16T02:30Z,LAFC,San Diego FC,DraftKings,1.5714285714285714,4.3,4.6
+761721,2026-08-16T02:30Z,San Jose Earthquakes,St. Louis CITY SC,DraftKings,2.1,3.75,2.9
+761723,2026-08-16T22:00Z,Chicago Fire FC,Portland Timbers,DraftKings,1.526315789473684,4.6,4.8
+761722,2026-08-16T22:00Z,New York City FC,Philadelphia Union,DraftKings,2.15,3.7,2.9
+761717,2026-08-17T00:30Z,Austin FC,FC Dallas,DraftKings,2.8,3.55,2.25
+761724,2026-08-17T02:30Z,Seattle Sounders FC,Vancouver Whitecaps,DraftKings,3.6,3.75,1.8695652173913042

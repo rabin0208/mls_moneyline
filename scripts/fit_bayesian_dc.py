@@ -123,9 +123,9 @@ def _posterior_side_probs(
     mu = np.empty(n_s)
     rho = np.empty(n_s)
     for i, x in enumerate(model.posterior_samples):
-        attack, defence, home_adv, r = _unpack_params(x, len(model.teams))
+        attack, defence, intercept, home_adv, r = _unpack_params(x, len(model.teams))
         r = float(np.clip(r, RHO_BOUNDS[0] + 1e-4, RHO_BOUNDS[1] - 1e-4))
-        lam[i], mu[i] = match_lambdas(attack, defence, home_adv, hi, ai)
+        lam[i], mu[i] = match_lambdas(attack, defence, intercept, home_adv, hi, ai)
         rho[i] = r
     return _outcome_probs_many(lam, mu, rho)
 
@@ -409,8 +409,8 @@ def main() -> None:
     )
     print(
         f"  Done in {time.time() - t0:.1f}s  "
-        f"home_adv={model.home_adv:.3f}  rho={model.rho:.3f}  "
-        f"teams={len(model.teams)}"
+        f"intercept={model.intercept:.3f}  home_adv={model.home_adv:.3f}  "
+        f"rho={model.rho:.3f}  teams={len(model.teams)}"
     )
     if model.posterior_samples is not None:
         print(f"  Posterior draws kept: {len(model.posterior_samples)}")
@@ -491,6 +491,7 @@ def main() -> None:
         "sigma_def": args.sigma_def,
         "n_posterior": 0 if args.map_only else args.n_posterior,
         "conf": args.conf,
+        "intercept_map": model.intercept,
         "home_adv_map": model.home_adv,
         "rho_map": model.rho,
         "n_train": int(len(train)),

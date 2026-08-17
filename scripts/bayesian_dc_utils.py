@@ -5,11 +5,15 @@ Team attack/defence strengths have Gaussian shrinkage priors:
 
   attack_i  ~ N(0, σ_att²)
   defence_i ~ N(0, σ_def²)
-  home_adv  ~ N(μ_home, σ_home²)
+  intercept ~ N(μ_int, σ_int²)     # log average scoring rate
+  home_adv  ~ N(μ_home, σ_home²)   # extra home boost only
   rho       ~ N(μ_rho, σ_rho²) truncated to RHO_BOUNDS
 
 Likelihood matches the frequentist Dixon-Coles model (independent Poisson
-goals with low-score correlation τ), optionally time-weighted.
+goals with low-score correlation τ), optionally time-weighted:
+
+  λ = exp(intercept + attack_home - defence_away + home_adv)
+  μ = exp(intercept + attack_away - defence_home)
 
 Inference:
   1. MAP via L-BFGS-B on the negative log posterior
@@ -25,10 +29,13 @@ from scipy.optimize import minimize
 from scipy.stats import poisson
 
 from dixon_coles_utils import (
+    DEFAULT_INTERCEPT,
     DEFAULT_XI,
     MAX_GOALS,
     RHO_BOUNDS,
+    intercept_home_from_model,
     match_lambdas,
+    n_free_params,
     outcome_probs,
     pd_to_datetime64,
     _pack_params,
@@ -36,9 +43,11 @@ from dixon_coles_utils import (
 )
 
 
-# Prior hyperparameters (log-intensity scale for attack/defence/home_adv)
+# Prior hyperparameters (log-intensity scale)
 DEFAULT_SIGMA_ATT = 0.35
 DEFAULT_SIGMA_DEF = 0.35
+DEFAULT_MU_INTERCEPT = DEFAULT_INTERCEPT
+DEFAULT_SIGMA_INTERCEPT = 0.25
 DEFAULT_MU_HOME = 0.25
 DEFAULT_SIGMA_HOME = 0.40
 DEFAULT_MU_RHO = -0.05
@@ -60,6 +69,7 @@ class BayesianDCModel:
     posterior_samples: np.ndarray | None = None
     map_x: np.ndarray | None = None
     cov: np.ndarray | None = None
+    intercept: float = 0.0
 
     @property
     def team_to_idx(self) -> dict[str, int]:
@@ -100,7 +110,10 @@ class BayesianDCModel:
                 max_goals=max_goals,
             )
 
-        lam, mu = match_lambdas(self.attack, self.defence, self.home_adv, hi, ai)
+        intercept, home_adv = intercept_home_from_model(self)
+        lam, mu = match_lambdas(
+            self.attack, self.defence, intercept, home_adv, hi, ai
+        )
         p_h, p_d, p_a = outcome_probs(lam, mu, self.rho, max_goals=max_goals)
         return {
             "p_home": p_h,
@@ -118,15 +131,18 @@ def _neg_log_prior(
     n_teams: int,
     sigma_att: float,
     sigma_def: float,
+    mu_intercept: float,
+    sigma_intercept: float,
     mu_home: float,
     sigma_home: float,
     mu_rho: float,
     sigma_rho: float,
 ) -> float:
-    attack, defence, home_adv, rho = _unpack_params(x, n_teams)
+    attack, defence, intercept, home_adv, rho = _unpack_params(x, n_teams)
     # Soft sum-to-zero already hard-coded; prior on all team params
     nlp = 0.5 * np.sum((attack / sigma_att) ** 2)
     nlp += 0.5 * np.sum((defence / sigma_def) ** 2)
+    nlp += 0.5 * ((intercept - mu_intercept) / sigma_intercept) ** 2
     nlp += 0.5 * ((home_adv - mu_home) / sigma_home) ** 2
     nlp += 0.5 * ((rho - mu_rho) / sigma_rho) ** 2
     # Keep rho inside valid DC region
@@ -144,12 +160,12 @@ def _neg_log_lik(
     weights: np.ndarray,
     n_teams: int,
 ) -> float:
-    attack, defence, home_adv, rho = _unpack_params(x, n_teams)
+    attack, defence, intercept, home_adv, rho = _unpack_params(x, n_teams)
     if not (RHO_BOUNDS[0] <= rho <= RHO_BOUNDS[1]):
         return 1e12
 
-    lam = np.exp(attack[home_idx] - defence[away_idx] + home_adv)
-    mu = np.exp(attack[away_idx] - defence[home_idx])
+    lam = np.exp(intercept + attack[home_idx] - defence[away_idx] + home_adv)
+    mu = np.exp(intercept + attack[away_idx] - defence[home_idx])
 
     tau = np.ones(len(hg), dtype=float)
     m00 = (hg == 0) & (ag == 0)
@@ -178,6 +194,8 @@ def _neg_log_posterior(
     n_teams: int,
     sigma_att: float,
     sigma_def: float,
+    mu_intercept: float,
+    sigma_intercept: float,
     mu_home: float,
     sigma_home: float,
     mu_rho: float,
@@ -187,7 +205,16 @@ def _neg_log_posterior(
     if nll >= 1e12:
         return nll
     nlp = _neg_log_prior(
-        x, n_teams, sigma_att, sigma_def, mu_home, sigma_home, mu_rho, sigma_rho
+        x,
+        n_teams,
+        sigma_att,
+        sigma_def,
+        mu_intercept,
+        sigma_intercept,
+        mu_home,
+        sigma_home,
+        mu_rho,
+        sigma_rho,
     )
     return nll + nlp
 
@@ -275,9 +302,11 @@ def _predict_from_samples(
     mu = np.empty(n_s)
     rho = np.empty(n_s)
     for i, x in enumerate(samples):
-        attack, defence, home_adv, r = _unpack_params(x, n_teams)
+        attack, defence, intercept, home_adv, r = _unpack_params(x, n_teams)
         r = float(np.clip(r, RHO_BOUNDS[0] + 1e-4, RHO_BOUNDS[1] - 1e-4))
-        lam[i], mu[i] = match_lambdas(attack, defence, home_adv, home_idx, away_idx)
+        lam[i], mu[i] = match_lambdas(
+            attack, defence, intercept, home_adv, home_idx, away_idx
+        )
         rho[i] = r
     p_h, p_d, p_a = _outcome_probs_many(lam, mu, rho, max_goals=max_goals)
     return {
@@ -301,6 +330,8 @@ def fit_bayesian_dc(
     xi: float = DEFAULT_XI,
     sigma_att: float = DEFAULT_SIGMA_ATT,
     sigma_def: float = DEFAULT_SIGMA_DEF,
+    mu_intercept: float = DEFAULT_MU_INTERCEPT,
+    sigma_intercept: float = DEFAULT_SIGMA_INTERCEPT,
     mu_home: float = DEFAULT_MU_HOME,
     sigma_home: float = DEFAULT_SIGMA_HOME,
     mu_rho: float = DEFAULT_MU_RHO,
@@ -329,12 +360,15 @@ def fit_bayesian_dc(
     days_ago = ((max_date - dates) / np.timedelta64(1, "D")).astype(float)
     weights = np.exp(-xi * days_ago)
 
+    if x0 is not None and len(x0) != n_free_params(n):
+        x0 = None
     if x0 is None:
-        x0 = np.zeros(2 * (n - 1) + 2)
+        x0 = np.zeros(n_free_params(n))
+        x0[-3] = mu_intercept
         x0[-2] = mu_home
         x0[-1] = mu_rho
 
-    bounds = [(-3.0, 3.0)] * (2 * (n - 1)) + [(-1.0, 1.5), RHO_BOUNDS]
+    bounds = [(-3.0, 3.0)] * (2 * (n - 1)) + [(-1.0, 1.5), (-1.0, 1.5), RHO_BOUNDS]
 
     def objective(x: np.ndarray) -> float:
         return _neg_log_posterior(
@@ -347,6 +381,8 @@ def fit_bayesian_dc(
             n,
             sigma_att,
             sigma_def,
+            mu_intercept,
+            sigma_intercept,
             mu_home,
             sigma_home,
             mu_rho,
@@ -361,7 +397,7 @@ def fit_bayesian_dc(
         options={"maxiter": 400, "ftol": 1e-9},
     )
     map_x = res.x
-    attack, defence, home_adv, rho = _unpack_params(map_x, n)
+    attack, defence, intercept, home_adv, rho = _unpack_params(map_x, n)
 
     samples = None
     cov = None
@@ -387,7 +423,7 @@ def fit_bayesian_dc(
             d = draw.copy()
             d[-1] = float(np.clip(d[-1], RHO_BOUNDS[0] + 1e-4, RHO_BOUNDS[1] - 1e-4))
             # Reject extreme attack/defence
-            if np.any(np.abs(d[:-2]) > 4.0):
+            if np.any(np.abs(d[:-3]) > 4.0):
                 continue
             if objective(d) >= 1e11:
                 continue
@@ -413,6 +449,7 @@ def fit_bayesian_dc(
         posterior_samples=samples,
         map_x=map_x,
         cov=cov,
+        intercept=float(intercept),
     )
 
 
@@ -427,7 +464,8 @@ def model_to_x0(model: BayesianDCModel, teams: list[str]) -> np.ndarray:
             defence[i] = model.defence[old[t]]
     attack = attack - attack.mean()
     defence = defence - defence.mean()
-    return _pack_params(attack, defence, model.home_adv, model.rho)
+    intercept, home_adv = intercept_home_from_model(model)
+    return _pack_params(attack, defence, intercept, home_adv, model.rho)
 
 
 def edge_posterior_prob(
@@ -460,9 +498,9 @@ def edge_posterior_prob(
     hits = 0
     n = 0
     for x in model.posterior_samples:
-        attack, defence, home_adv, rho = _unpack_params(x, len(model.teams))
+        attack, defence, intercept, home_adv, rho = _unpack_params(x, len(model.teams))
         rho = float(np.clip(rho, RHO_BOUNDS[0] + 1e-4, RHO_BOUNDS[1] - 1e-4))
-        lam, mu = match_lambdas(attack, defence, home_adv, hi, ai)
+        lam, mu = match_lambdas(attack, defence, intercept, home_adv, hi, ai)
         p_h, p_d, p_a = outcome_probs(lam, mu, rho)
         p = {"H": p_h, "D": p_d, "A": p_a}[side]
         if (p - fair) >= edge_threshold:

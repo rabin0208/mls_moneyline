@@ -1,16 +1,20 @@
 {
+  "test_seasons": [
+    "2025"
+  ],
   "xi": 0.0019,
   "sigma_att": 0.35,
   "sigma_def": 0.35,
   "n_posterior": 0,
   "conf": 0.0,
-  "home_adv_map": 0.481534313391464,
-  "rho_map": -0.08557098829306942,
+  "intercept_map": 0.21899961368843013,
+  "home_adv_map": 0.3096000671434208,
+  "rho_map": -0.08479833506010055,
   "n_train": 5264,
   "n_test": 538,
-  "test_logloss": 1.0601820193233056,
+  "test_logloss": 1.049619991487331,
   "market_logloss": 1.0235726822853168,
-  "test_acc": 0.45724907063197023,
+  "test_acc": 0.4628252788104089,
   "market_acc": 0.49814126394052044,
   "dc_xi_ref": 0.0019
 }

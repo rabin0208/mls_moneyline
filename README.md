@@ -6,7 +6,7 @@ ML project focused on **P(home win)** vs closing market odds, with selective bet
 Uses [football-data.co.uk](https://www.football-data.co.uk/usa.php) USA CSV (`data/USA.csv`).
 
 **Results & how to use the models in practice:** see [FINDINGS.md](FINDINGS.md)
-(Bayesian Dixon–Coles ≈ closest to market; calibration vs edge; soft/early lines + CLV).
+(Bayesian Dixon–Coles with league intercept; calibration vs edge; soft/early lines + CLV).
 
 ## Setup
 
@@ -69,9 +69,11 @@ python scripts/fit_bayesian_dc.py --test-seasons 2026   # current season YTD
 python scripts/fit_bayesian_dc.py --conf 0.7          # only bet when P(edge>0) ≥ 0.7
 python scripts/fit_bayesian_dc.py --map-only           # shrinkage MAP, no Laplace
 ```
-Fits attack/defence with Gaussian shrinkage priors, approximates the posterior
-with Laplace at the MAP, and averages scoreline probabilities into 1X2.
+Fits attack/defence with Gaussian shrinkage priors plus a **league intercept**
+so home advantage is only the extra home boost (not the scoring rate). Optional
+Laplace posterior at the MAP; averages scoreline probabilities into 1X2.
 Writes `results/tables/bayesian_dc_edge_roi.csv` (and `*_2026.csv` for other holdouts).
+See FINDINGS.md for the intercept fix and edge-bet calibration.
 
 ### 7. Baselines
 ```bash

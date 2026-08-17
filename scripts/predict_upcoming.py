@@ -162,6 +162,11 @@ def _espn_events(dates: list[str]) -> list[dict]:
 def load_fixtures_csv(path: Path) -> pd.DataFrame:
     df = pd.read_csv(path)
     df["kickoff_utc"] = pd.to_datetime(df["kickoff_utc"], utc=True)
+    now = pd.Timestamp.now(tz="UTC")
+    if "completed" not in df.columns:
+        df["completed"] = df["kickoff_utc"] < now
+    if "status" not in df.columns:
+        df["status"] = np.where(df["completed"], "Final", "Scheduled")
     return df.sort_values("kickoff_utc").reset_index(drop=True)
 
 
@@ -180,6 +185,7 @@ def fetch_espn_slate(dates: list[str]) -> pd.DataFrame:
         if not home or not away:
             continue
         kick = pd.to_datetime(event.get("date"), utc=True)
+        status_type = (event.get("status") or {}).get("type") or {}
         dk_h = dk_d = dk_a = np.nan
         book = None
         odds_list = comps.get("odds") or []
@@ -205,6 +211,8 @@ def fetch_espn_slate(dates: list[str]) -> pd.DataFrame:
                 "kickoff_utc": kick,
                 "espn_home": home,
                 "espn_away": away,
+                "status": status_type.get("name") or status_type.get("description") or "",
+                "completed": bool(status_type.get("completed")),
                 "book": book,
                 "odds_H": dk_h,
                 "odds_D": dk_d,
@@ -300,10 +308,15 @@ def score_slate(slate: pd.DataFrame, model: BayesianDCModel, known: set[str], *,
             [("H", p_h), ("D", p_d), ("A", p_a)],
             key=lambda t: t[1],
         )[0]
-        kick_et = row["kickoff_utc"].tz_convert("America/New_York")
+        kick_utc = pd.to_datetime(row["kickoff_utc"], utc=True)
+        kick_et = kick_utc.tz_convert("America/New_York")
         rows.append(
             {
+                "espn_id": row.get("espn_id"),
+                "kickoff_utc": kick_utc.isoformat(),
                 "kickoff_et": kick_et.strftime("%Y-%m-%d %H:%M"),
+                "status": row.get("status") or "",
+                "completed": bool(row.get("completed", False)),
                 "home_name": home,
                 "away_name": away,
                 "p_home": p_h,
@@ -332,6 +345,130 @@ def score_slate(slate: pd.DataFrame, model: BayesianDCModel, known: set[str], *,
             }
         )
     return pd.DataFrame(rows)
+
+
+UPCOMING_ODDS = {"H": "odds_H", "D": "odds_D", "A": "odds_A"}
+SIDE_NAME = {"H": "Home", "D": "Draw", "A": "Away"}
+
+
+def pick_upcoming_bets(
+    df: pd.DataFrame,
+    edge: float,
+    sides: list[str],
+) -> pd.DataFrame:
+    """Mark the best qualifying 1X2 side per game (flat 1u). No result yet."""
+    out = df.copy()
+    bet_side: list[str | None] = []
+    bet_odds: list[float | None] = []
+    bet_edge: list[float | None] = []
+    bet_team: list[str | None] = []
+
+    for _, row in out.iterrows():
+        best_s = None
+        best_e = -1e9
+        for side in sides:
+            e = row.get(f"edge_{side}")
+            if e is None or not np.isfinite(e):
+                continue
+            e = float(e)
+            if e > best_e:
+                best_e = e
+                best_s = side
+        if best_s is None or best_e < edge:
+            bet_side.append(None)
+            bet_odds.append(None)
+            bet_edge.append(None)
+            bet_team.append(None)
+            continue
+        odds = float(row[UPCOMING_ODDS[best_s]])
+        if not np.isfinite(odds) or odds <= 1.0:
+            bet_side.append(None)
+            bet_odds.append(None)
+            bet_edge.append(None)
+            bet_team.append(None)
+            continue
+        if best_s == "H":
+            team = str(row["home_name"])
+        elif best_s == "A":
+            team = str(row["away_name"])
+        else:
+            team = "Draw"
+        bet_side.append(best_s)
+        bet_odds.append(odds)
+        bet_edge.append(best_e)
+        bet_team.append(team)
+
+    out["bet_side"] = bet_side
+    out["bet_odds"] = bet_odds
+    out["bet_edge"] = bet_edge
+    out["bet_team"] = bet_team
+    return out
+
+
+def upcoming_only(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop completed / already-kicked-off matches from a scored slate."""
+    out = df.copy()
+    if "completed" in out.columns:
+        raw = out["completed"]
+        if raw.dtype == bool:
+            done = raw.fillna(False)
+        else:
+            done = raw.astype(str).str.lower().isin(["1", "true", "yes"])
+        out = out.loc[~done]
+    cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(hours=2)
+    kick = None
+    if "kickoff_utc" in out.columns and not out.empty:
+        kick = pd.to_datetime(out["kickoff_utc"], utc=True, errors="coerce")
+    elif "kickoff_et" in out.columns and not out.empty:
+        kick = pd.to_datetime(out["kickoff_et"], errors="coerce")
+        if kick.dt.tz is None:
+            kick = kick.dt.tz_localize("America/New_York")
+        kick = kick.dt.tz_convert("UTC")
+    if kick is not None:
+        out = out.loc[kick >= cutoff]
+    return out.reset_index(drop=True)
+
+
+def load_scored_slate(
+    *,
+    n_days: int = 4,
+    map_only: bool = True,
+    refit: bool = False,
+    allow_fixture_fallback: bool = True,
+) -> pd.DataFrame:
+    """Fetch the ESPN window, fit/load Bayesian DC, score 1X2 vs DraftKings."""
+    dates = default_dates(n_days)
+    hist = load_matches()
+    known = set(hist["home_name"]) | set(hist["away_name"])
+    fixtures_path = PROJECT_ROOT / "data" / "upcoming_fixtures.csv"
+
+    slate = None
+    try:
+        slate = fetch_espn_slate(dates)
+    except Exception:
+        if not allow_fixture_fallback:
+            raise
+        if fixtures_path.exists():
+            slate = load_fixtures_csv(fixtures_path)
+        else:
+            cached = TABLES_DIR / "bayesian_dc_upcoming.csv"
+            if cached.exists():
+                return pd.read_csv(cached)
+            raise
+
+    model = load_or_fit(
+        hist,
+        refit=refit,
+        map_only=map_only,
+        n_posterior=min(120, DEFAULT_N_POSTERIOR),
+        xi=DEFAULT_XI,
+        sigma_att=DEFAULT_SIGMA_ATT,
+        sigma_def=DEFAULT_SIGMA_DEF,
+    )
+    scored = score_slate(slate, model, known, use_posterior=not map_only)
+    TABLES_DIR.mkdir(parents=True, exist_ok=True)
+    scored.to_csv(TABLES_DIR / "bayesian_dc_upcoming.csv", index=False, float_format="%.6f")
+    return scored
 
 
 def _fmt_odds(x: float) -> str:

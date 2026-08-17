@@ -25,6 +25,21 @@ Run all commands from the project root.
 
 Holdout season: `2025` (train on all seasons through `2024`).
 
+## Probability dashboard
+
+```bash
+streamlit run app.py
+```
+
+Opens a dark-themed upcoming-slate view (Bayesian Dixon–Coles vs DraftKings 1X2)
+plus a holdout ROI tab. Sidebar defaults match the practical rule from
+[FINDINGS.md](FINDINGS.md): **away only**, **10% edge**, **flat 1u** (not Kelly).
+
+The dashboard scores the next few days via ESPN (DraftKings when present), or
+falls back to `data/upcoming_fixtures.csv`. Model/odds are cached for 12 hours;
+use **Refresh slate** to fetch again. If `streamlit` is missing in an existing
+env: `pip install streamlit`.
+
 ## Primary pipeline (home win)
 
 ### 1. Prepare matches + market columns
